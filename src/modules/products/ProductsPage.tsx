@@ -18,6 +18,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,17 +67,28 @@ export function ProductsPage() {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [dirty, setDirty] = useState(false);
+  const [siteOutOfSync, setSiteOutOfSync] = useState(false);
+  const [formDirty, setFormDirty] = useState(false);
+  const [githubConfigured, setGithubConfigured] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    try {
-      setProducts(await api<ProductRow[]>("/products"));
-    } catch {
+    const [productsResult, settingsResult] = await Promise.allSettled([
+      api<ProductRow[]>("/products"),
+      api<{ githubConfigured: boolean }>("/settings/status"),
+    ]);
+    if (productsResult.status === "fulfilled") {
+      setProducts(productsResult.value);
+    } else {
       setError("Не удалось загрузить каталог. Проверьте соединение с базой.");
     }
+    setGithubConfigured(
+      settingsResult.status === "fulfilled" &&
+        settingsResult.value.githubConfigured,
+    );
     setLoading(false);
   }, []);
 
@@ -102,6 +114,7 @@ export function ProductsPage() {
     setDraft(blankProduct());
     setAvailability("on_order");
     setPublished(false);
+    setFormDirty(false);
     setMessage("");
     setError("");
   }
@@ -117,6 +130,7 @@ export function ProductsPage() {
     });
     setAvailability(row.availability);
     setPublished(row.is_published);
+    setFormDirty(false);
     setMessage("");
     setError("");
     document
@@ -125,7 +139,7 @@ export function ProductsPage() {
   }
   function patch<K extends keyof Product>(key: K, value: Product[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
-    setDirty(true);
+    setFormDirty(true);
   }
   function patchSpec(index: number, key: keyof ProductSpec, value: string) {
     setDraft((current) => ({
@@ -134,7 +148,7 @@ export function ProductsPage() {
         i === index ? { ...spec, [key]: value } : spec,
       ),
     }));
-    setDirty(true);
+    setFormDirty(true);
   }
 
   async function uploadPhotos(event: ChangeEvent<HTMLInputElement>) {
@@ -179,7 +193,7 @@ export function ProductsPage() {
         image: current.image || next[0].src,
         imageAlt: current.imageAlt || next[0].alt,
       }));
-      setDirty(true);
+      setFormDirty(true);
     }
     setUploading(false);
   }
@@ -195,7 +209,7 @@ export function ProductsPage() {
       image: gallery[0]?.src ?? "",
       imageAlt: gallery[0]?.alt ?? "",
     }));
-    setDirty(true);
+    setFormDirty(true);
   }
   function removePhoto(index: number) {
     const gallery = draft.gallery.filter((_, i) => i !== index);
@@ -205,7 +219,7 @@ export function ProductsPage() {
       image: gallery[0]?.src ?? "",
       imageAlt: gallery[0]?.alt ?? "",
     }));
-    setDirty(true);
+    setFormDirty(true);
   }
 
   async function saveProduct(event: FormEvent<HTMLFormElement>) {
@@ -247,9 +261,12 @@ export function ProductsPage() {
       );
       setEditing(saved);
       setDraft({ ...data });
-      setDirty(true);
+      setSiteOutOfSync(true);
+      setFormDirty(false);
       setMessage(
-        "Изменения сохранены в базе. Для обновления сайта синхронизируйте каталог.",
+        githubConfigured
+          ? "Изменения сохранены в CRM. Закройте карточку, затем опубликуйте каталог на сайте."
+          : "Изменения сохранены в CRM. Сайт обновится после подключения GitHub.",
       );
     } catch (reason) {
       setError(
@@ -276,10 +293,65 @@ export function ProductsPage() {
         method: "DELETE",
       });
       setProducts((current) => current.filter((item) => item.id !== row.id));
-      setDirty(true);
+      setSiteOutOfSync(true);
       if (editing?.id === row.id) startCreate();
     } catch {
       setError("Не удалось удалить товар.");
+    }
+  }
+
+  async function publishCatalog() {
+    setPublishing(true);
+    setError("");
+    setMessage("");
+    try {
+      const publication = await api<{ publication_id: string }>(
+        "/catalog/publish",
+        { method: "POST", body: "{}" },
+      );
+      const startedAt = Date.now();
+      let finalStatus:
+        | { status: "succeeded" | "failed"; error_message?: string | null }
+        | undefined;
+      while (Date.now() - startedAt < 60_000) {
+        await new Promise((resolve) => window.setTimeout(resolve, 2000));
+        const status = await api<{
+          lastPublication?: {
+            id: string;
+            status: string;
+            error_message: string | null;
+          } | null;
+        }>("/settings/status");
+        const last = status.lastPublication;
+        if (
+          last?.id === publication.publication_id &&
+          (last.status === "succeeded" || last.status === "failed")
+        ) {
+          finalStatus = last as typeof finalStatus;
+          break;
+        }
+      }
+      if (finalStatus?.status === "succeeded") {
+        setSiteOutOfSync(false);
+        setMessage("Каталог опубликован на сайте.");
+      } else if (finalStatus?.status === "failed") {
+        setError(
+          finalStatus.error_message ||
+            "Публикация не завершилась. Проверьте настройки и попробуйте ещё раз.",
+        );
+      } else {
+        setMessage(
+          "Публикация всё ещё выполняется. Результат появится в разделе «Настройки».",
+        );
+      }
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Не удалось запустить публикацию каталога.",
+      );
+    } finally {
+      setPublishing(false);
     }
   }
 
@@ -288,16 +360,29 @@ export function ProductsPage() {
       <PageHeading
         eyebrow="SnowEnduro / товары"
         title="Каталог"
-        description="Редактируйте карточки, характеристики и галереи. Автоматическая публикация каталога на сайт пока не подключена."
+        description="Редактируйте карточки, характеристики и галереи каталога SnowEnduro."
         action={
           <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
-              disabled
-              title="Сайт пока не подключён к каталогу CRM"
+              onClick={() => void publishCatalog()}
+              disabled={
+                !githubConfigured ||
+                !siteOutOfSync ||
+                formDirty ||
+                editorOpen ||
+                publishing ||
+                saving ||
+                uploading
+              }
+              title={
+                githubConfigured
+                  ? "Опубликовать сохранённые изменения каталога на сайте"
+                  : "Подключение GitHub на сервере CRM пока не настроено"
+              }
             >
               <RefreshCw size={15} className="mr-2" />
-              Публикация сайта не подключена
+              {publishing ? "Публикуем…" : "Опубликовать на сайт"}
             </Button>
             <Button onClick={startCreate}>
               <PackagePlus size={16} className="mr-2" />
@@ -306,9 +391,24 @@ export function ProductsPage() {
           </div>
         }
       />
-      {dirty && (
+      {!githubConfigured && (
+        <p className="mb-4 rounded-lg border border-border bg-card px-4 py-3 text-sm text-muted-foreground">
+          Синхронизация с сайтом пока не подключена. Товары сохраняются в CRM;
+          публикация станет доступна после настройки GitHub в разделе{" "}
+          <Link className="text-primary underline" to="/settings">
+            «Настройки»
+          </Link>
+          .
+        </p>
+      )}
+      {formDirty && (
         <p className="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
-          Есть изменения, которые ещё не отправлены на сайт.
+          Есть несохранённые изменения в карточке товара.
+        </p>
+      )}
+      {siteOutOfSync && (
+        <p className="mb-4 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm text-primary">
+          Сохранённые изменения каталога ещё не опубликованы на сайте.
         </p>
       )}
       {error && (
@@ -343,7 +443,10 @@ export function ProductsPage() {
               variant="ghost"
               size="icon"
               aria-label="Закрыть редактор"
-              onClick={() => setEditorOpen(false)}
+              onClick={() => {
+                setEditorOpen(false);
+                setFormDirty(false);
+              }}
             >
               <X size={18} />
             </Button>
@@ -365,7 +468,7 @@ export function ProductsPage() {
                       name,
                       slug: current.slug ? current.slug : slugify(name),
                     }));
-                    setDirty(true);
+                    setFormDirty(true);
                   }}
                 />
               </Field>
@@ -423,7 +526,7 @@ export function ProductsPage() {
                   value={availability}
                   onChange={(event) => {
                     setAvailability(event.target.value as Availability);
-                    setDirty(true);
+                    setFormDirty(true);
                   }}
                 >
                   {AVAILABILITY_OPTIONS.map((item) => (
@@ -624,7 +727,7 @@ export function ProductsPage() {
                       ...current,
                       specs: [...current.specs, { label: "", value: "" }],
                     }));
-                    setDirty(true);
+                    setFormDirty(true);
                   }}
                 >
                   Добавить строку
@@ -667,7 +770,7 @@ export function ProductsPage() {
                           ...current,
                           specs: current.specs.filter((_, i) => i !== index),
                         }));
-                        setDirty(true);
+                        setFormDirty(true);
                       }}
                     >
                       <Trash2 size={16} />
@@ -685,7 +788,7 @@ export function ProductsPage() {
                   checked={published}
                   onChange={(event) => {
                     setPublished(event.target.checked);
-                    setDirty(true);
+                    setFormDirty(true);
                   }}
                 />
                 Показывать на сайте после синхронизации
@@ -694,7 +797,10 @@ export function ProductsPage() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setEditorOpen(false)}
+                  onClick={() => {
+                    setEditorOpen(false);
+                    setFormDirty(false);
+                  }}
                 >
                   Отмена
                 </Button>

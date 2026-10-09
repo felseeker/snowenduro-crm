@@ -111,18 +111,26 @@ export function SnowSettingsPage() {
               />
               <StatusRow
                 label="Статические страницы товаров"
-                value="Статический сайт; автоматическая синхронизация не настроена"
-                ready={false}
+                value={
+                  status?.githubConfigured
+                    ? "Обновляются через GitHub Actions после публикации"
+                    : "Обновятся после подключения GitHub"
+                }
+                ready={Boolean(status?.githubConfigured)}
               />
               <StatusRow
                 label="Серверная интеграция GitHub"
-                value="Не настроена"
-                ready={false}
+                value={
+                  status?.githubConfigured
+                    ? "Подключена"
+                    : "Нужны серверные ключи GitHub и callback"
+                }
+                ready={Boolean(status?.githubConfigured)}
               />
               <StatusRow
                 label="Репозиторий сайта"
                 value={status?.siteRepository || "felseeker/snowenduro-site"}
-                ready={false}
+                ready={Boolean(status?.githubConfigured)}
               />
             </dl>
             <Button

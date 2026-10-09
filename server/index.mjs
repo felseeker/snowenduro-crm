@@ -145,7 +145,7 @@ if (isDev) {
   vite = await createViteServer({
     configFile: path.join(root, "vite.config.ts"),
     server: { middlewareMode: true, hmr: { server: undefined }, host },
-    appType: "custom",
+    appType: "spa",
   });
   viteMiddleware = vite.middlewares;
 }

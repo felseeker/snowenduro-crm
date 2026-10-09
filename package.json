@@ -5,6 +5,7 @@
   "scripts": {
     "test:unit:app": "vitest --config vitest.config.ts --project app",
     "test:unit:functions": "vitest --config vitest.config.ts --project functions",
+    "test:smoke": "node scripts/smoke-test.mjs",
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "dev": "node --env-file-if-exists=.env server/index.mjs --dev",
     "build": "tsc && vite build",
