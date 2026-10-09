@@ -7,13 +7,14 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { getSupabaseClient } from "@/components/atomic-crm/providers/supabase/supabase";
+import { api } from "@/lib/api";
 import { ErrorNotice, PageHeading } from "../shared";
 
 type Status = {
   telegramConfigured: boolean;
   githubConfigured: boolean;
   siteRepository: string;
+  database: string;
   lastPublication?: {
     status: string;
     created_at: string;
@@ -31,12 +32,11 @@ export function SnowSettingsPage() {
   async function load() {
     setLoading(true);
     setError("");
-    const { data, error: invokeError } =
-      await getSupabaseClient().functions.invoke("settings-status", {
-        body: {},
-      });
-    if (invokeError) setError("Не удалось проверить серверные подключения.");
-    else setStatus(data as Status);
+    try {
+      setStatus(await api<Status>("/settings/status"));
+    } catch {
+      setError("Не удалось проверить сервер CRM.");
+    }
     setLoading(false);
   }
   useEffect(() => {
@@ -47,19 +47,16 @@ export function SnowSettingsPage() {
     setWorking(true);
     setError("");
     setMessage("");
-    const { data, error: invokeError } =
-      await getSupabaseClient().functions.invoke("publish-catalog", {
-        body: {},
-      });
-    if (invokeError || data?.configured === false)
-      setError(
-        "Синхронизация сайта не настроена или недоступна. Текущий сайт продолжает работать с последней опубликованной версией.",
-      );
-    else {
-      setMessage(
-        "Запрос на публикацию отправлен. Проверьте итоговый статус в GitHub Actions.",
-      );
+    try {
+      await api("/catalog/publish", { method: "POST", body: "{}" });
+      setMessage("Каталог отправлен на публикацию.");
       await load();
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Автоматическая публикация каталога пока не настроена.",
+      );
     }
     setWorking(false);
   }
@@ -103,19 +100,24 @@ export function SnowSettingsPage() {
             </div>
             <dl className="mt-5 space-y-4 text-sm">
               <StatusRow
+                label="Хранилище CRM"
+                value={status?.database || "SQLite · локальный файл"}
+                ready
+              />
+              <StatusRow
                 label="Публичный сайт"
                 value="https://snowenduro.ru"
                 ready
               />
               <StatusRow
                 label="Статические страницы товаров"
-                value="Обновляются после сборки GitHub Pages"
+                value="Статический сайт; автоматическая синхронизация не настроена"
                 ready={false}
               />
               <StatusRow
                 label="Серверная интеграция GitHub"
-                value={status?.githubConfigured ? "Настроена" : "Не настроена"}
-                ready={Boolean(status?.githubConfigured)}
+                value="Не настроена"
+                ready={false}
               />
               <StatusRow
                 label="Репозиторий сайта"
@@ -147,35 +149,34 @@ export function SnowSettingsPage() {
             </div>
             <ul className="mt-5 space-y-3 text-sm leading-6 text-muted-foreground">
               <li>
-                Доступ к разделам проверяется авторизацией Supabase и политиками
-                PostgreSQL на сервере.
+                Вход и доступ проверяет сервер CRM. Данные хранятся в локальном
+                SQLite-файле на этой же машине.
               </li>
               <li>
                 Самостоятельная регистрация закрыта. В CRM входит только
                 созданный администратор.
               </li>
               <li>
-                Секреты Telegram и GitHub задаются на сервере. Значения секретов
-                не передаются в интерфейс.
+                Токен Telegram задаётся в серверном файле `.env`. Сам токен не
+                передаётся в интерфейс.
               </li>
               <li>
                 Телефоны, имена и комментарии клиентов не включаются в
                 уведомления Telegram.
               </li>
               <li>
-                Российский регион и резервные копии должны быть настроены в
-                инфраструктуре до приёма реальных обращений.
+                Размещение сервера, резервные копии и документы обработки данных
+                нужно проверить до приёма реальных обращений.
               </li>
             </ul>
             <div className="mt-5 rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm leading-6">
               <strong className="text-foreground">
-                CRM сейчас не развёрнута.
+                Сайт и CRM — разные части.
               </strong>
               <span className="text-muted-foreground">
                 {" "}
-                Перед включением форм проверьте место хранения базы, HTTPS,
-                резервное копирование, политику конфиденциальности, текст
-                согласия и необходимые уведомления.
+                GitHub Pages показывает только интерфейс и не хранит заявки.
+                Публичную форму нужно подключать к работающему серверу.
               </span>
             </div>
           </section>

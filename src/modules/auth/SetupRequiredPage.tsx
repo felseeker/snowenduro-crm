@@ -8,11 +8,11 @@ export function SetupRequiredPage() {
         <p className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Первичная настройка
         </p>
-        <h1 className="text-2xl font-semibold">CRM ещё не подключена</h1>
+        <h1 className="text-2xl font-semibold">Регистрация закрыта</h1>
         <p className="mt-3 leading-6 text-muted-foreground">
-          Настройте адрес Supabase и публичный ключ в локальном окружении.
-          Сервер и учётную запись администратора нужно подготовить отдельно по
-          инструкции проекта.
+          Самостоятельное создание учётных записей недоступно. Первый
+          администратор создаётся при защищённой первичной настройке сервера;
+          дальнейший вход выполняется по его логину и паролю.
         </p>
       </section>
     </main>

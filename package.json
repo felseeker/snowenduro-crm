@@ -5,10 +5,8 @@
   "scripts": {
     "test:unit:app": "vitest --config vitest.config.ts --project app",
     "test:unit:functions": "vitest --config vitest.config.ts --project functions",
-    "admin:create": "node scripts/create-admin.mjs",
-    "catalog:seed": "node scripts/seed-catalog.mjs",
-    "start": "vite --host 127.0.0.1",
-    "dev": "vite --force",
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "dev": "node --env-file-if-exists=.env server/index.mjs --dev",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit --project tsconfig.app.json",
     "preview": "vite preview",

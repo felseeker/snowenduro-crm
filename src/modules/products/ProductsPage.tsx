@@ -21,7 +21,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { getSupabaseClient } from "@/components/atomic-crm/providers/supabase/supabase";
+import { api, jsonBody } from "@/lib/api";
 import { ErrorNotice, formatPrice, PageHeading } from "../shared";
 import {
   AVAILABILITY_OPTIONS,
@@ -72,17 +72,11 @@ export function ProductsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const { data, error: queryError } = await getSupabaseClient()
-      .from("products")
-      .select(
-        "id, slug, category, name, data, availability, is_published, sort_order, updated_at",
-      )
-      .order("sort_order")
-      .order("name")
-      .limit(500);
-    if (queryError)
+    try {
+      setProducts(await api<ProductRow[]>("/products"));
+    } catch {
       setError("Не удалось загрузить каталог. Проверьте соединение с базой.");
-    else setProducts((data ?? []) as ProductRow[]);
+    }
     setLoading(false);
   }, []);
 
@@ -163,31 +157,20 @@ export function ProductsPage() {
         setError("Размер одного изображения не должен превышать 12 МБ.");
         continue;
       }
-      const suffix =
-        file.name
-          .split(".")
-          .pop()
-          ?.toLowerCase()
-          .replace(/[^a-z0-9]/g, "") || "jpg";
-      const folder = slugify(draft.slug || draft.name || "product");
-      const path = folder + "/" + crypto.randomUUID() + "." + suffix;
-      const { error: uploadError } = await getSupabaseClient()
-        .storage.from("catalog-images")
-        .upload(path, file, {
-          contentType: file.type,
-          upsert: false,
-          cacheControl: "3600",
+      try {
+        const dataUrl = await readAsDataUrl(file);
+        const { src } = await api<{ src: string }>("/uploads", {
+          method: "POST",
+          body: jsonBody({
+            filename: file.name,
+            mimeType: file.type,
+            base64: dataUrl.split(",")[1] || "",
+          }),
         });
-      if (uploadError) {
-        setError(
-          "Не удалось загрузить «" +
-            file.name +
-            ". Проверьте настройки хранилища.",
-        );
-        continue;
+        next.push({ src, alt: draft.name || file.name, label: file.name });
+      } catch {
+        setError("Не удалось загрузить «" + file.name + "» на сервер CRM.");
       }
-      const src = "storage://catalog-images/" + path;
-      next.push({ src, alt: draft.name || file.name, label: file.name });
     }
     if (next.length !== draft.gallery.length) {
       setDraft((current) => ({
@@ -252,31 +235,11 @@ export function ProductsPage() {
     setSaving(true);
     setError("");
     setMessage("");
-    const request = editing
-      ? getSupabaseClient()
-          .from("products")
-          .update(row)
-          .eq("id", editing.id)
-          .select(
-            "id, slug, category, name, data, availability, is_published, sort_order, updated_at",
-          )
-          .single()
-      : getSupabaseClient()
-          .from("products")
-          .insert(row)
-          .select(
-            "id, slug, category, name, data, availability, is_published, sort_order, updated_at",
-          )
-          .single();
-    const { data: savedRow, error: saveError } = await request;
-    if (saveError)
-      setError(
-        saveError.code === "23505"
-          ? "Этот адрес товара уже используется. Выберите другой."
-          : "Не удалось сохранить товар.",
+    try {
+      const saved = await api<ProductRow>(
+        editing ? "/products/" + encodeURIComponent(editing.id) : "/products",
+        { method: editing ? "PUT" : "POST", body: jsonBody(row) },
       );
-    else {
-      const saved = savedRow as ProductRow;
       setProducts((current) =>
         editing
           ? current.map((item) => (item.id === saved.id ? saved : item))
@@ -287,6 +250,14 @@ export function ProductsPage() {
       setDirty(true);
       setMessage(
         "Изменения сохранены в базе. Для обновления сайта синхронизируйте каталог.",
+      );
+    } catch (reason) {
+      setError(
+        reason instanceof Error && reason.message.includes("уже занят")
+          ? "Этот адрес товара уже используется. Выберите другой."
+          : reason instanceof Error
+            ? reason.message
+            : "Не удалось сохранить товар.",
       );
     }
     setSaving(false);
@@ -300,41 +271,16 @@ export function ProductsPage() {
     )
       return;
     setError("");
-    const { error: deleteError } = await getSupabaseClient()
-      .from("products")
-      .delete()
-      .eq("id", row.id);
-    if (deleteError) setError("Не удалось удалить товар.");
-    else {
+    try {
+      await api("/products/" + encodeURIComponent(row.id), {
+        method: "DELETE",
+      });
       setProducts((current) => current.filter((item) => item.id !== row.id));
       setDirty(true);
       if (editing?.id === row.id) startCreate();
+    } catch {
+      setError("Не удалось удалить товар.");
     }
-  }
-
-  async function publishCatalog() {
-    setMessage("");
-    setError("");
-    const { data, error: publishError } =
-      await getSupabaseClient().functions.invoke("publish-catalog", {
-        body: {},
-      });
-    if (publishError) {
-      setError(
-        "Не удалось запустить синхронизацию. Проверьте серверные настройки публикации и повторите попытку.",
-      );
-      return;
-    }
-    if (data?.configured === false) {
-      setError(
-        "Синхронизация ещё не настроена на сервере. Каталог сохранён, текущая версия сайта не изменилась.",
-      );
-      return;
-    }
-    setDirty(false);
-    setMessage(
-      "Синхронизация запущена. Результат публикации появится в истории GitHub Actions.",
-    );
   }
 
   return (
@@ -342,12 +288,16 @@ export function ProductsPage() {
       <PageHeading
         eyebrow="SnowEnduro / товары"
         title="Каталог"
-        description="Редактируйте карточки, характеристики и галереи. Изменения сохраняются в CRM отдельно от публикации сайта."
+        description="Редактируйте карточки, характеристики и галереи. Автоматическая публикация каталога на сайт пока не подключена."
         action={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => void publishCatalog()}>
+            <Button
+              variant="outline"
+              disabled
+              title="Сайт пока не подключён к каталогу CRM"
+            >
               <RefreshCw size={15} className="mr-2" />
-              Синхронизировать сайт
+              Публикация сайта не подключена
             </Button>
             <Button onClick={startCreate}>
               <PackagePlus size={16} className="mr-2" />
@@ -582,7 +532,7 @@ export function ProductsPage() {
                   <h3 className="font-medium">Фотографии и галерея</h3>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Первое изображение становится главным. Фото загружаются в
-                    закрытое хранилище CRM.
+                    локальное хранилище сервера CRM.
                   </p>
                 </div>
                 <label className="inline-flex cursor-pointer items-center rounded-md border border-input px-3 py-2 text-sm hover:bg-muted">
@@ -885,23 +835,11 @@ function Field({
 }
 
 function ProductImage({ src, alt }: { src: string; alt: string }) {
-  const [url, setUrl] = useState("");
-  useEffect(() => {
-    let active = true;
-    if (src.startsWith("storage://catalog-images/")) {
-      const path = src.slice("storage://catalog-images/".length);
-      void getSupabaseClient()
-        .storage.from("catalog-images")
-        .createSignedUrl(path, 300)
-        .then(({ data }) => {
-          if (active) setUrl(data?.signedUrl ?? "");
-        });
-    } else if (src.startsWith("/")) setUrl("https://snowenduro.ru" + src);
-    else setUrl(src);
-    return () => {
-      active = false;
-    };
-  }, [src]);
+  const url = src.startsWith("/uploads/")
+    ? src
+    : src.startsWith("/")
+      ? `https://snowenduro.ru${src}`
+      : src;
   return (
     <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg border border-border bg-muted">
       {url ? (
@@ -916,6 +854,19 @@ function ProductImage({ src, alt }: { src: string; alt: string }) {
       )}
     </div>
   );
+}
+
+function readAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () =>
+      typeof reader.result === "string"
+        ? resolve(reader.result)
+        : reject(new Error("Не удалось прочитать фотографию."));
+    reader.onerror = () =>
+      reject(reader.error || new Error("Ошибка чтения файла."));
+    reader.readAsDataURL(file);
+  });
 }
 
 function slugify(value: string) {

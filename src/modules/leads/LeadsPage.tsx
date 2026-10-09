@@ -3,12 +3,9 @@ import { ArrowUpRight, RefreshCw, Search } from "lucide-react";
 import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { getSupabaseClient } from "@/components/atomic-crm/providers/supabase/supabase";
+import { api, jsonBody } from "@/lib/api";
 import { ErrorNotice, formatDate, PageHeading, StatusPill } from "../shared";
 import { LEAD_STATUSES, type LeadStatus, type WebsiteLead } from "../types";
-
-const columns =
-  "id, public_code, created_at, customer_name, phone, product_interest, source_page, compatibility_make, compatibility_model, compatibility_year, manager_comments, status";
 
 export function LeadsPage() {
   const [rows, setRows] = useState<WebsiteLead[]>([]);
@@ -21,31 +18,14 @@ export function LeadsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    let request = getSupabaseClient()
-      .from("website_leads")
-      .select(columns)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    if (status !== "all") request = request.eq("status", status);
-    const term = search
-      .trim()
-      .replace(/[,*()%".]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    if (term)
-      request = request.or(
-        "customer_name.ilike.%" +
-          term +
-          "%,phone.ilike.%" +
-          term +
-          "%,product_interest.ilike.%" +
-          term +
-          "%",
-      );
-    const { data, error: queryError } = await request;
-    if (queryError)
+    const params = new URLSearchParams();
+    if (status !== "all") params.set("status", status);
+    if (search.trim()) params.set("q", search.trim());
+    try {
+      setRows(await api<WebsiteLead[]>("/leads?" + params.toString()));
+    } catch {
       setError("Не удалось загрузить заявки. Проверьте соединение с базой.");
-    else setRows((data ?? []) as WebsiteLead[]);
+    }
     setLoading(false);
   }, [search, status]);
 
@@ -55,17 +35,19 @@ export function LeadsPage() {
   }, [load, refreshKey]);
 
   async function updateStatus(id: string, nextStatus: LeadStatus) {
-    const { error: updateError } = await getSupabaseClient()
-      .from("website_leads")
-      .update({ status: nextStatus })
-      .eq("id", id);
-    if (updateError) setError("Не удалось изменить статус заявки.");
-    else
+    try {
+      await api("/leads/" + encodeURIComponent(id), {
+        method: "PATCH",
+        body: jsonBody({ status: nextStatus }),
+      });
       setRows((current) =>
         current.map((row) =>
           row.id === id ? { ...row, status: nextStatus } : row,
         ),
       );
+    } catch {
+      setError("Не удалось изменить статус заявки.");
+    }
   }
 
   return (
