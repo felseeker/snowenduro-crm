@@ -178,7 +178,7 @@ async function ensureSchema(sql) {
 }
 
 async function seedCatalog(sql) {
-  const existing = await sql`SELECT id FROM crm_products LIMIT 1`;
+  const existing = await queryRows(sql`SELECT id FROM crm_products LIMIT 1`);
   if (existing.length) return;
   let seed;
   try {
@@ -227,8 +227,9 @@ async function route({ event, headers, method, url, sql }) {
     return { body: { ok: true } };
   }
   if (pathname === "/api/public/products" && method === "GET") {
-    const rows =
-      await sql`SELECT slug, category, name, data_json, availability, sort_order FROM crm_products WHERE is_published = true ORDER BY sort_order, name`;
+    const rows = await queryRows(
+      sql`SELECT slug, category, name, data_json, availability, sort_order FROM crm_products WHERE is_published = true ORDER BY sort_order, name`,
+    );
     return { body: rows.map(publicProductRow) };
   }
   if (pathname === "/api/public/leads" && method === "POST") {
@@ -241,8 +242,9 @@ async function route({ event, headers, method, url, sql }) {
       sql`SELECT id FROM crm_catalog_publications WHERE status = ${"queued"} ORDER BY created_at LIMIT 1`,
     );
     if (!publication) return { body: { pending: false } };
-    const products =
-      await sql`SELECT slug, category, name, data_json, availability, sort_order FROM crm_products WHERE is_published = true ORDER BY sort_order, name`;
+    const products = await queryRows(
+      sql`SELECT slug, category, name, data_json, availability, sort_order FROM crm_products WHERE is_published = true ORDER BY sort_order, name`,
+    );
     return {
       body: {
         pending: true,
@@ -269,8 +271,9 @@ async function route({ event, headers, method, url, sql }) {
   if (leadMatch && method === "PATCH")
     return updateLead(sql, leadMatch[1], event);
   if (pathname === "/api/products" && method === "GET") {
-    const rows =
-      await sql`SELECT * FROM crm_products ORDER BY sort_order, name`;
+    const rows = await queryRows(
+      sql`SELECT * FROM crm_products ORDER BY sort_order, name`,
+    );
     return { body: rows.map(productRow) };
   }
   if (pathname === "/api/products" && method === "POST")
@@ -289,8 +292,9 @@ async function route({ event, headers, method, url, sql }) {
   if (pathname === "/api/uploads" && method === "POST")
     return saveImage(sql, event);
   if (pathname === "/api/telegram/recipients" && method === "GET") {
-    const rows =
-      await sql`SELECT id, chat_id, is_enabled FROM crm_telegram_recipients ORDER BY chat_id`;
+    const rows = await queryRows(
+      sql`SELECT id, chat_id, is_enabled FROM crm_telegram_recipients ORDER BY chat_id`,
+    );
     return {
       body: rows.map((row) => ({
         ...row,
@@ -301,8 +305,9 @@ async function route({ event, headers, method, url, sql }) {
   if (pathname === "/api/telegram/recipients" && method === "PUT")
     return saveRecipients(sql, event);
   if (pathname === "/api/telegram/status" && method === "GET") {
-    const rows =
-      await sql`SELECT state, attempt_count FROM crm_notification_outbox`;
+    const rows = await queryRows(
+      sql`SELECT state, attempt_count FROM crm_notification_outbox`,
+    );
     return {
       body: {
         configured: Boolean(process.env.TELEGRAM_BOT_TOKEN),
@@ -365,9 +370,15 @@ function httpError(status, message) {
   return error;
 }
 
+async function queryRows(result) {
+  const resultSets = await result;
+  if (Array.isArray(resultSets?.[0])) return resultSets[0];
+  return Array.isArray(resultSets) ? resultSets : [];
+}
+
 async function one(result) {
-  const rows = await result;
-  return rows?.[0] || null;
+  const rows = await queryRows(result);
+  return rows[0] || null;
 }
 
 function cleanText(value, max) {
@@ -635,8 +646,9 @@ async function createPublicLead(sql, headers, event) {
 
 async function dispatchNotification(sql, leadId) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const recipients =
-    await sql`SELECT chat_id FROM crm_telegram_recipients WHERE is_enabled = true`;
+  const recipients = await queryRows(
+    sql`SELECT chat_id FROM crm_telegram_recipients WHERE is_enabled = true`,
+  );
   if (!token || !recipients.length) {
     await sql`UPSERT INTO crm_notification_outbox (lead_id, state, attempt_count, last_error, sent_at) VALUES (${leadId}, ${"pending"}, ${0}, ${token ? "Нет активных получателей." : "Токен бота не настроен."}, ${""})`;
     return;
@@ -666,8 +678,9 @@ async function dispatchNotification(sql, leadId) {
 
 async function telegramSafeInterest(sql, value) {
   const interest = cleanText(value, 200);
-  const products =
-    await sql`SELECT name, slug FROM crm_products WHERE is_published = true`;
+  const products = await queryRows(
+    sql`SELECT name, slug FROM crm_products WHERE is_published = true`,
+  );
   const match = products.find(
     (product) =>
       product.name.toLowerCase() === interest.toLowerCase() ||
@@ -681,8 +694,9 @@ async function telegramSafeInterest(sql, value) {
 }
 
 async function listLeads(sql, url) {
-  const all =
-    await sql`SELECT * FROM crm_leads ORDER BY created_at DESC LIMIT 1000`;
+  const all = await queryRows(
+    sql`SELECT * FROM crm_leads ORDER BY created_at DESC LIMIT 1000`,
+  );
   const term = cleanText(url.searchParams.get("q"), 100).toLocaleLowerCase(
     "ru-RU",
   );
@@ -739,7 +753,7 @@ async function saveProduct(sql, event, id = "") {
   const serialized = JSON.stringify(data);
   if (Buffer.byteLength(serialized, "utf8") > 1_000_000)
     throw httpError(413, "Карточка товара слишком большая.");
-  const existingRows = await sql`SELECT id, slug FROM crm_products`;
+  const existingRows = await queryRows(sql`SELECT id, slug FROM crm_products`);
   if (existingRows.some((row) => row.slug === slug && row.id !== id))
     throw httpError(409, "Адрес товара уже занят.");
   if (id && !existingRows.some((row) => row.id === id))
@@ -815,14 +829,15 @@ async function saveRecipients(sql, event) {
       400,
       "Chat ID должен содержать только цифры; для групп допустим знак минус.",
     );
-  const old = await sql`SELECT id FROM crm_telegram_recipients`;
+  const old = await queryRows(sql`SELECT id FROM crm_telegram_recipients`);
   for (const row of old)
     if (!ids.includes(row.id))
       await sql`DELETE FROM crm_telegram_recipients WHERE id = ${row.id}`;
   for (const chatId of ids)
     await sql`UPSERT INTO crm_telegram_recipients (id, chat_id, is_enabled) VALUES (${chatId}, ${chatId}, true)`;
-  const rows =
-    await sql`SELECT id, chat_id, is_enabled FROM crm_telegram_recipients ORDER BY chat_id`;
+  const rows = await queryRows(
+    sql`SELECT id, chat_id, is_enabled FROM crm_telegram_recipients ORDER BY chat_id`,
+  );
   return {
     body: rows.map((row) => ({ ...row, is_enabled: Boolean(row.is_enabled) })),
   };
@@ -850,8 +865,9 @@ async function telegramAction(sql, event) {
     return { body: { chats: [...chats.values()] } };
   }
   if (body.action === "retry") {
-    const pending =
-      await sql`SELECT lead_id FROM crm_notification_outbox WHERE state IN (${"pending"}, ${"failed"}) LIMIT 100`;
+    const pending = await queryRows(
+      sql`SELECT lead_id FROM crm_notification_outbox WHERE state IN (${"pending"}, ${"failed"}) LIMIT 100`,
+    );
     let sent = 0;
     for (const item of pending) {
       await dispatchNotification(sql, item.lead_id);
@@ -862,8 +878,9 @@ async function telegramAction(sql, event) {
     }
     return { body: { sent, checked: pending.length } };
   }
-  const recipients =
-    await sql`SELECT chat_id FROM crm_telegram_recipients WHERE is_enabled = true`;
+  const recipients = await queryRows(
+    sql`SELECT chat_id FROM crm_telegram_recipients WHERE is_enabled = true`,
+  );
   if (!recipients.length)
     throw httpError(400, "Сначала добавьте Chat ID получателей.");
   if (body.action === "test") {
