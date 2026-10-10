@@ -61,11 +61,11 @@ try {
   await page
     .getByRole("heading", { name: "Заявки" })
     .waitFor({ state: "visible" });
-  const session = (await page.context().cookies(baseUrl)).find(
-    (cookie) => cookie.name === "snowenduro_session",
+  const sessionToken = await page.evaluate(() =>
+    sessionStorage.getItem("snowenduro.crm.session"),
   );
-  assert.ok(session?.httpOnly);
-  const sessionCookie = `snowenduro_session=${session.value}`;
+  assert.match(sessionToken ?? "", /^[a-f0-9]{64}$/);
+  const authorization = `Bearer ${sessionToken}`;
   checks.push("администратор и защищённая сессия создаются через интерфейс");
 
   const idempotencyKey = crypto.randomUUID();
@@ -190,18 +190,18 @@ try {
     .getByText("Нужны серверные ключи GitHub и callback", { exact: true })
     .waitFor({ state: "visible" });
   const telegramStatus = await request("/api/telegram/status", {
-    cookie: sessionCookie,
+    authorization,
   });
   assert.equal(telegramStatus.data.configured, false);
   const telegramAction = await request("/api/telegram/action", {
     method: "POST",
-    cookie: sessionCookie,
+    authorization,
     body: { action: "test" },
   });
   assert.equal(telegramAction.response.status, 503);
   const publishAction = await request("/api/catalog/publish", {
     method: "POST",
-    cookie: sessionCookie,
+    authorization,
     body: {},
   });
   assert.equal(publishAction.response.status, 503);
@@ -265,10 +265,10 @@ async function waitForServer() {
 
 async function request(
   route,
-  { method = "GET", body, cookie, origin = baseUrl } = {},
+  { method = "GET", body, authorization, origin = baseUrl } = {},
 ) {
   const headers = { Origin: origin };
-  if (cookie) headers.Cookie = cookie;
+  if (authorization) headers.Authorization = authorization;
   if (body !== undefined) headers["Content-Type"] = "application/json";
   const response = await fetch(`${baseUrl}${route}`, {
     method,
