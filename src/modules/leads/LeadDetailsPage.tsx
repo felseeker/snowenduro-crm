@@ -3,7 +3,7 @@ import { ArrowLeft, Save } from "lucide-react";
 import { Link, useNavigate, useParams } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { getSupabaseClient } from "@/components/atomic-crm/providers/supabase/supabase";
+import { api, jsonBody } from "@/lib/api";
 import { ErrorNotice, formatDate, PageHeading, StatusPill } from "../shared";
 import { LEAD_STATUSES, type LeadStatus, type WebsiteLead } from "../types";
 
@@ -19,21 +19,16 @@ export function LeadDetailsPage() {
 
   useEffect(() => {
     let active = true;
-    void getSupabaseClient()
-      .from("website_leads")
-      .select(
-        "id, public_code, created_at, customer_name, phone, product_interest, source_page, compatibility_make, compatibility_model, compatibility_year, manager_comments, status",
-      )
-      .eq("id", id)
-      .maybeSingle()
-      .then(({ data, error: queryError }) => {
+    void api<WebsiteLead>("/leads/" + encodeURIComponent(id))
+      .then((data) => {
         if (!active) return;
-        if (queryError || !data)
-          setError("Заявка не найдена или доступ к ней запрещён.");
-        else {
-          setLead(data as WebsiteLead);
-          setComments((data as WebsiteLead).manager_comments ?? "");
-        }
+        setLead(data);
+        setComments(data.manager_comments ?? "");
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setError("Заявка не найдена или доступ к ней запрещён.");
         setLoading(false);
       });
     return () => {
@@ -44,12 +39,18 @@ export function LeadDetailsPage() {
   async function changeStatus(next: LeadStatus) {
     if (!lead) return;
     setError("");
-    const { error: updateError } = await getSupabaseClient()
-      .from("website_leads")
-      .update({ status: next })
-      .eq("id", lead.id);
-    if (updateError) setError("Не удалось изменить статус.");
-    else setLead({ ...lead, status: next });
+    try {
+      const updated = await api<WebsiteLead>(
+        "/leads/" + encodeURIComponent(lead.id),
+        {
+          method: "PATCH",
+          body: jsonBody({ status: next }),
+        },
+      );
+      setLead(updated);
+    } catch {
+      setError("Не удалось изменить статус.");
+    }
   }
 
   async function saveComments() {
@@ -57,14 +58,18 @@ export function LeadDetailsPage() {
     setSaving(true);
     setSaved(false);
     setError("");
-    const { error: updateError } = await getSupabaseClient()
-      .from("website_leads")
-      .update({ manager_comments: comments.trim() })
-      .eq("id", lead.id);
-    if (updateError) setError("Не удалось сохранить комментарий.");
-    else {
-      setLead({ ...lead, manager_comments: comments.trim() });
+    try {
+      const updated = await api<WebsiteLead>(
+        "/leads/" + encodeURIComponent(lead.id),
+        {
+          method: "PATCH",
+          body: jsonBody({ manager_comments: comments.trim() }),
+        },
+      );
+      setLead(updated);
       setSaved(true);
+    } catch {
+      setError("Не удалось сохранить комментарий.");
     }
     setSaving(false);
   }

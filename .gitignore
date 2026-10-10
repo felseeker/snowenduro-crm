@@ -7,9 +7,12 @@
 
 # dependencies
 /node_modules
+/data/
+/uploads/
 
 # testing
 /coverage
+.vitest/
 __screenshots__
 
 # production

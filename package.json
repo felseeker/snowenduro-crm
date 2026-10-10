@@ -5,10 +5,9 @@
   "scripts": {
     "test:unit:app": "vitest --config vitest.config.ts --project app",
     "test:unit:functions": "vitest --config vitest.config.ts --project functions",
-    "admin:create": "node scripts/create-admin.mjs",
-    "catalog:seed": "node scripts/seed-catalog.mjs",
-    "start": "vite --host 127.0.0.1",
-    "dev": "vite --force",
+    "test:smoke": "node scripts/smoke-test.mjs",
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "dev": "node --env-file-if-exists=.env server/index.mjs --dev",
     "build": "tsc && vite build",
     "typecheck": "tsc --noEmit --project tsconfig.app.json",
     "preview": "vite preview",
@@ -19,7 +18,6 @@
     "prepare": "husky"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.100.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@hello-pangea/dnd": "^18.0.1",
     "@nivo/bar": "^0.99.0",
@@ -42,6 +40,7 @@
     "@radix-ui/react-toggle-group": "^1.1.11",
     "@radix-ui/react-tooltip": "^1.2.9",
     "@streamparser/json-whatwg": "^0.0.22",
+    "@supabase/supabase-js": "^2.100.0",
     "@tailwindcss/vite": "^4.2.2",
     "@tanstack/query-async-storage-persister": "^5.90.22",
     "@tanstack/react-query": "^5.101.0",
@@ -81,7 +80,6 @@
     "react-error-boundary": "^6.1.2",
     "react-hook-form": "^7.78.0",
     "react-router": "^7.17.0",
-    "rollup-plugin-visualizer": "^6.0.3",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.1.11",

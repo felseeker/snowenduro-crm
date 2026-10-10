@@ -41,7 +41,7 @@ jobs:
       - name: Build
         run: npm run build
 
-  app-unit:
+  app-smoke:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -59,7 +59,7 @@ jobs:
       - name: Install headless Chromium
         run: npx playwright install --with-deps chromium-headless-shell
 
-      - name: Test app
-        run: npm run test:unit:app -- --run
+      - name: Test CRM flows
+        run: npm run test:smoke
         env:
           CI: "1"

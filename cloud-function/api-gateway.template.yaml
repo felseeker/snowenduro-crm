@@ -1,0 +1,28 @@
+openapi: 3.0.0
+info:
+  title: SnowEnduro CRM API
+  version: 1.0.0
+x-yc-apigateway:
+  rateLimit:
+    allRequests:
+      rps: 10
+paths:
+  /{proxy+}:
+    x-yc-apigateway-any-method:
+      summary: SnowEnduro CRM API route
+      operationId: crmApi
+      parameters:
+        - name: proxy
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: CRM API response
+      x-yc-apigateway-integration:
+        type: cloud_functions
+        function_id: REPLACE_WITH_CLOUD_FUNCTION_ID
+        tag: "$latest"
+        service_account_id: REPLACE_WITH_SERVICE_ACCOUNT_ID
+        payload_format_version: "0.1"

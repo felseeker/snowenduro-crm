@@ -9,17 +9,22 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { getSupabaseClient } from "@/components/atomic-crm/providers/supabase/supabase";
+import { api, jsonBody } from "@/lib/api";
 import { ErrorNotice, PageHeading } from "../shared";
 import type { TelegramRecipient } from "../types";
 
-type ServiceStatus = { telegramConfigured?: boolean };
+type ServiceStatus = {
+  configured?: boolean;
+  pending?: number;
+  failed?: number;
+};
 type FoundChat = { chatId: string; type: "private" | "group" | "supergroup" };
 
 export function TelegramPage() {
   const [recipients, setRecipients] = useState<TelegramRecipient[]>([]);
   const [chatIds, setChatIds] = useState("");
   const [configured, setConfigured] = useState<boolean | null>(null);
+  const [queueCount, setQueueCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [action, setAction] = useState<"test" | "retry" | "discover" | null>(
@@ -32,17 +37,11 @@ export function TelegramPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
-    const [recipientResult, statusResult] = await Promise.all([
-      getSupabaseClient()
-        .from("telegram_recipients")
-        .select("id, chat_id, label, is_enabled")
-        .order("created_at"),
-      getSupabaseClient().functions.invoke("settings-status", { body: {} }),
-    ]);
-    if (recipientResult.error)
-      setError("Не удалось загрузить получателей Telegram.");
-    else {
-      const rows = (recipientResult.data ?? []) as TelegramRecipient[];
+    try {
+      const [rows, status] = await Promise.all([
+        api<TelegramRecipient[]>("/telegram/recipients"),
+        api<ServiceStatus>("/telegram/status"),
+      ]);
       setRecipients(rows);
       setChatIds(
         rows
@@ -50,13 +49,11 @@ export function TelegramPage() {
           .map((row) => row.chat_id)
           .join("\n"),
       );
+      setConfigured(Boolean(status.configured));
+      setQueueCount((status.pending || 0) + (status.failed || 0));
+    } catch {
+      setError("Не удалось загрузить получателей Telegram.");
     }
-    if (!statusResult.error)
-      setConfigured(
-        Boolean(
-          (statusResult.data as ServiceStatus | null)?.telegramConfigured,
-        ),
-      );
     setLoading(false);
   }, []);
 
@@ -82,61 +79,55 @@ export function TelegramPage() {
     setSaving(true);
     setError("");
     setMessage("");
-    const client = getSupabaseClient();
-    const { error: upsertError } = ids.length
-      ? await client.from("telegram_recipients").upsert(
-          ids.map((chat_id) => ({ chat_id, label: null, is_enabled: true })),
-          { onConflict: "chat_id" },
-        )
-      : { error: null };
-    if (upsertError) {
-      setError("Не удалось сохранить список получателей.");
+    try {
+      const rows = await api<TelegramRecipient[]>("/telegram/recipients", {
+        method: "PUT",
+        body: jsonBody({ chatIds: ids }),
+      });
+      setRecipients(rows);
+      setMessage("Список получателей сохранён.");
+    } catch (reason) {
+      setError(
+        reason instanceof Error
+          ? reason.message
+          : "Не удалось сохранить список получателей.",
+      );
+    } finally {
       setSaving(false);
-      return;
     }
-    const wanted = new Set(ids);
-    const removed = recipients.filter((row) => !wanted.has(row.chat_id));
-    for (const row of removed) {
-      const { error: deleteError } = await client
-        .from("telegram_recipients")
-        .delete()
-        .eq("id", row.id);
-      if (deleteError) {
-        setError(
-          "Часть получателей не удалось удалить. Обновите список и повторите.",
-        );
-        setSaving(false);
-        return;
-      }
-    }
-    await load();
-    setMessage("Список получателей сохранён.");
-    setSaving(false);
   }
 
   async function runAction(which: "test" | "retry") {
     setAction(which);
     setError("");
     setMessage("");
-    const { data, error: invokeError } =
-      await getSupabaseClient().functions.invoke("telegram-settings", {
-        body: { action: which },
+    try {
+      const data = await api<{
+        sent?: number;
+        checked?: number;
+        chats?: FoundChat[];
+      }>("/telegram/action", {
+        method: "POST",
+        body: jsonBody({ action: which }),
       });
-    if (invokeError)
+      setMessage(
+        which === "test"
+          ? "Тестовое сообщение отправлено получателям."
+          : "Повторная отправка завершена. Отправлено: " +
+              String(data.sent ?? 0) +
+              ".",
+      );
+      if (which === "retry")
+        setQueueCount(Math.max(0, (data.checked || 0) - (data.sent || 0)));
+    } catch {
       setError(
         which === "test"
           ? "Не удалось отправить тестовое уведомление. Проверьте конфигурацию на сервере."
           : "Не удалось запустить повторную отправку.",
       );
-    else
-      setMessage(
-        which === "test"
-          ? "Тестовое сообщение отправлено получателям."
-          : "Повторная отправка завершена. Отправлено: " +
-              String(data?.sent ?? 0) +
-              ".",
-      );
-    setAction(null);
+    } finally {
+      setAction(null);
+    }
   }
 
   async function findChats() {
@@ -144,21 +135,24 @@ export function TelegramPage() {
     setError("");
     setMessage("");
     setFoundChats([]);
-    const { data, error: invokeError } =
-      await getSupabaseClient().functions.invoke("telegram-settings", {
-        body: { action: "discover" },
+    try {
+      const { chats } = await api<{ chats?: FoundChat[] }>("/telegram/action", {
+        method: "POST",
+        body: jsonBody({ action: "discover" }),
       });
-    const chats = (data as { chats?: FoundChat[] } | null)?.chats;
-    if (invokeError || !Array.isArray(chats))
+      if (!Array.isArray(chats)) throw new Error("Invalid response");
+      if (chats.length === 0)
+        setMessage(
+          "Новых чатов не найдено. Попросите получателей нажать /start у бота и обновите поиск.",
+        );
+      else setFoundChats(chats);
+    } catch {
       setError(
         "Не удалось найти чаты. Убедитесь, что получатели нажали /start и для бота не включён webhook.",
       );
-    else if (chats.length === 0)
-      setMessage(
-        "Новых чатов не найдено. Попросите получателей нажать /start у бота и обновите поиск.",
-      );
-    else setFoundChats(chats);
-    setAction(null);
+    } finally {
+      setAction(null);
+    }
   }
 
   function addFoundChat(chatId: string) {
@@ -221,9 +215,9 @@ export function TelegramPage() {
               >
                 @BotFather
               </a>
-              , задайте токен в серверных секретах и отправьте получателям
-              ссылку на бота. Для группы добавьте в неё бота, затем отправьте
-              команду /start.
+              , задайте токен в локальном файле `.env` на сервере CRM и
+              отправьте получателям ссылку на бота. Для группы добавьте в неё
+              бота, затем отправьте команду /start.
             </div>
             <label className="mt-5 block space-y-2 text-sm font-medium">
               Chat ID получателей
@@ -327,8 +321,8 @@ export function TelegramPage() {
             <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
               <h2 className="font-semibold">Подключение бота</h2>
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                Токен бота хранится только в серверных секретах. Он не
-                показывается в CRM и не попадает в браузер.
+                Токен бота хранится только на сервере CRM. Он не показывается в
+                CRM и не попадает в браузер.
               </p>
               <div className="mt-4 rounded-lg border border-border bg-background px-3 py-3 text-sm">
                 Состояние:{" "}
@@ -339,9 +333,9 @@ export function TelegramPage() {
                 </strong>
               </div>
               <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                Для включения задайте `TELEGRAM_BOT_TOKEN` в переменных
-                серверной функции, затем добавьте Chat ID получателей. Никакие
-                данные клиента в Telegram не отправляются.
+                Для включения задайте `TELEGRAM_BOT_TOKEN` в файле `.env` рядом
+                с CRM, затем добавьте Chat ID получателей. Никакие данные
+                клиента в Telegram не отправляются.
               </p>
             </section>
             <section className="rounded-xl border border-border bg-card p-5 sm:p-6">
@@ -349,6 +343,9 @@ export function TelegramPage() {
               <p className="mt-2 text-sm leading-6 text-muted-foreground">
                 Заявка сохраняется в базе до отправки уведомления. Если Telegram
                 временно недоступен, запись останется в очереди.
+              </p>
+              <p className="mt-3 text-sm">
+                Неотправленных уведомлений: <strong>{queueCount}</strong>
               </p>
               <Button
                 className="mt-4 w-full"
