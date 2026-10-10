@@ -22,7 +22,7 @@ import { Link } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { api, jsonBody } from "@/lib/api";
+import { api, getApiAssetUrl, jsonBody } from "@/lib/api";
 import { ErrorNotice, formatPrice, PageHeading } from "../shared";
 import {
   AVAILABILITY_OPTIONS,
@@ -167,8 +167,8 @@ export function ProductsPage() {
         setError("Поддерживаются фотографии JPG, PNG, WebP и AVIF.");
         continue;
       }
-      if (file.size > 12 * 1024 * 1024) {
-        setError("Размер одного изображения не должен превышать 12 МБ.");
+      if (file.size > 2 * 1024 * 1024) {
+        setError("Размер одного изображения не должен превышать 2 МБ.");
         continue;
       }
       try {
@@ -942,7 +942,7 @@ function Field({
 
 function ProductImage({ src, alt }: { src: string; alt: string }) {
   const url = src.startsWith("/uploads/")
-    ? src
+    ? getApiAssetUrl(src)
     : src.startsWith("/")
       ? `https://snowenduro.ru${src}`
       : src;

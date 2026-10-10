@@ -271,7 +271,10 @@ async function handleApi(req, res, url) {
   }
   if (url.pathname === "/api/auth/logout" && req.method === "POST") {
     assertSameOrigin(req);
-    const token = getCookie(req, "snowenduro_session");
+    const token =
+      String(req.headers.authorization || "").match(
+        /^Bearer\s+([a-f0-9]{64})$/i,
+      )?.[1] || getCookie(req, "snowenduro_session");
     if (token)
       db.prepare("delete from sessions where token_hash = ?").run(
         hashToken(token),
@@ -416,7 +419,10 @@ function getCookie(req, name) {
   );
 }
 function getSession(req) {
-  const token = getCookie(req, "snowenduro_session");
+  const token =
+    String(req.headers.authorization || "").match(
+      /^Bearer\s+([a-f0-9]{64})$/i,
+    )?.[1] || getCookie(req, "snowenduro_session");
   if (!token || !/^[a-f0-9]{64}$/.test(token)) return null;
   const session = db
     .prepare(
@@ -444,7 +450,7 @@ function createSession(req, res, email) {
     "Set-Cookie",
     `snowenduro_session=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=2592000${secure ? "; Secure" : ""}`,
   );
-  return sendJson(res, 200, { authenticated: true, email });
+  return sendJson(res, 200, { authenticated: true, email, token });
 }
 function clearSessionCookie(req) {
   const secure =
